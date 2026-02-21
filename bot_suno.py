@@ -1,4 +1,6 @@
 import os
+import time
+import pandas as pd
 from dotenv import load_dotenv
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
@@ -7,12 +9,39 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
-import time
 
 load_dotenv()
 
 EMAIL = os.getenv("SUNO_EMAIL")
 SENHA = os.getenv("SUNO_SENHA")
+
+# MAPA EXATO DE CADA CARTEIRA (Quais colunas manter e quais ignorar)
+CARTEIRAS = [
+    {
+        "nome": "Valor",
+        "url": "https://investidor.suno.com.br/carteiras/valor",
+        "ignorar_indices": [1], # Pula a coluna 1 (Logo)
+        "cabecalhos": ["Rank", "Ticker", "Entrada", "Preço Atual", "Preço Teto", "Alocação", "Rentabilidade", "Viés"]
+    },
+    {
+        "nome": "Dividendos",
+        "url": "https://investidor.suno.com.br/carteiras/dividendos",
+        "ignorar_indices": [1], # Pula a coluna 1 (Logo)
+        "cabecalhos": ["Rank", "Ticker", "DY Esperado", "Entrada", "Preço Atual", "Preço Teto", "Alocação", "Rentabilidade", "Viés"]
+    },
+    {
+        "nome": "FIIs",
+        "url": "https://investidor.suno.com.br/carteiras/fiis",
+        "ignorar_indices": [9], # FIIs NÃO tem logo. O índice 9 é a coluna 'Relatório' que não queremos
+        "cabecalhos": ["Rank", "Ticker", "Setor", "DY Esperado", "Entrada", "Preço Atual", "Preço Teto", "Alocação", "Rentabilidade", "Viés"]
+    },
+    {
+        "nome": "Start",
+        "url": "https://investidor.suno.com.br/carteiras/suno-start",
+        "ignorar_indices": [1], # Pula a coluna 1 (Logo)
+        "cabecalhos": ["Rank", "Ticker", "Entrada", "Preço Atual", "Preço Teto", "Alocação", "Rentabilidade", "Viés"]
+    }
+]
 
 def iniciar_robo():
     if not EMAIL or not SENHA:
@@ -24,15 +53,10 @@ def iniciar_robo():
     navegador = webdriver.Chrome(service=servico)
     
     try:
-        print("Acessando investidor.suno.com.br...")
+        # --- ETAPA 1: LOGIN ---
         navegador.get("https://investidor.suno.com.br/")
-        
         wait = WebDriverWait(navegador, 15)
-        
-        print("Aguardando redirecionamento para a tela de login...")
         wait.until(EC.url_contains("login.suno.com.br"))
-        
-        print("Preenchendo credenciais...")
         
         xpath_email = '//*[@id="user_email_wrapper"]//input'
         campo_email = wait.until(EC.element_to_be_clickable((By.XPATH, xpath_email)))
@@ -42,22 +66,72 @@ def iniciar_robo():
         campo_senha = navegador.find_element(By.XPATH, xpath_senha)
         campo_senha.send_keys(SENHA)
         
-        print("Clicando em entrar...")
-        xpath_botao = '//*[@id="login_button"]'
-        botao_entrar = navegador.find_element(By.XPATH, xpath_botao)
-        
-        # SOLUÇÃO: Clique via JavaScript para ignorar o banner de cookies
+        botao_entrar = navegador.find_element(By.XPATH, '//*[@id="login_button"]')
         navegador.execute_script("arguments[0].click();", botao_entrar)
         
-        print("Aguardando o painel principal carregar...")
         wait.until(EC.url_contains("investidor.suno.com.br"))
         print("✅ Login realizado com sucesso!")
         
-        time.sleep(5)
+        # --- ETAPA 2: EXTRAÇÃO DE MÚLTIPLAS CARTEIRAS ---
+        nome_arquivo = "Base_Suno.xlsx"
         
-    except TimeoutException:
-        print("\n❌ ERRO DE RASTREAMENTO: O robô não encontrou os elementos na tela.")
-        
+        with pd.ExcelWriter(nome_arquivo, engine='openpyxl') as writer:
+            for carteira in CARTEIRAS:
+                print(f"\nExtraindo dados da carteira: {carteira['nome']}...")
+                navegador.get(carteira['url'])
+                
+                try:
+                    wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "table tbody tr")))
+                    time.sleep(3) 
+                except TimeoutException:
+                    print(f"⚠️ Tabela não encontrada para {carteira['nome']}. Pulando...")
+                    continue
+                
+                todas_as_tabelas = navegador.find_elements(By.TAG_NAME, "table")
+                dados_extraidos = []
+                
+                for tabela in todas_as_tabelas:
+                    linhas = tabela.find_elements(By.CSS_SELECTOR, "tbody tr")
+                    
+                    if len(linhas) > 0:
+                        colunas_teste = linhas[0].find_elements(By.TAG_NAME, "td")
+                        # Calcula quantas colunas a tabela real da Suno deveria ter
+                        qtd_esperada = len(carteira["cabecalhos"]) + len(carteira["ignorar_indices"])
+                        
+                        if len(colunas_teste) >= qtd_esperada - 1:
+                            print(f"✅ Tabela principal de {carteira['nome']} identificada!")
+                            
+                            for linha in linhas:
+                                colunas = linha.find_elements(By.TAG_NAME, "td")
+                                
+                                # Processa qualquer linha que tenha conteúdo útil (evita quebras)
+                                if len(colunas) >= 2:
+                                    linha_limpa = []
+                                    for idx, coluna in enumerate(colunas):
+                                        if idx in carteira["ignorar_indices"]:
+                                            continue
+                                        texto_bruto = coluna.text.strip()
+                                        texto_principal = texto_bruto.split('\n')[0] 
+                                        linha_limpa.append(texto_principal)
+                                        
+                                    # MÁGICA: Ajusta o tamanho da linha para ficar idêntico ao cabeçalho (útil para as linhas de Renda Fixa)
+                                    linha_limpa = linha_limpa[:len(carteira["cabecalhos"])]
+                                    while len(linha_limpa) < len(carteira["cabecalhos"]):
+                                        linha_limpa.append("")
+                                        
+                                    dados_extraidos.append(linha_limpa)
+                            break 
+                        
+                if len(dados_extraidos) > 0:
+                    # Agora o Pandas injeta os cabeçalhos de forma forçada e perfeita!
+                    df = pd.DataFrame(dados_extraidos, columns=carteira["cabecalhos"])
+                    df.to_excel(writer, sheet_name=carteira['nome'], index=False)
+                    print(f"✅ Dados de {carteira['nome']} salvos na aba!")
+                else:
+                    print(f"❌ Não foi possível extrair {carteira['nome']}.")
+
+        print(f"\n🎉 EXCELENTE! Arquivo '{nome_arquivo}' gerado com todas as abas corretas!")
+
     except Exception as e:
         print(f"\n❌ ERRO INESPERADO: {e}")
         
