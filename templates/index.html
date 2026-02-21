@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <title>Painel de Aportes Suno</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.datatables.net/1.13.6/css/dataTables.bootstrap5.min.css" rel="stylesheet">
+    <style>
+        body { background-color: #f4f6f9; }
+        .nav-tabs .nav-link.active { font-weight: bold; color: #198754; border-bottom: 3px solid #198754; }
+        .nav-tabs .nav-link { color: #495057; font-size: 1.1rem; }
+        th, td { white-space: nowrap; } 
+        
+        /* Deixa a barra de pesquisa nova bem bonita */
+        .dataTables_filter input {
+            border: 2px solid #198754 !important;
+            border-radius: 8px !important;
+            padding: 8px 15px !important;
+            width: 300px !important;
+        }
+        .dataTables_filter label { font-weight: bold; color: transparent; } /* Esconde o texto Search */
+    </style>
+</head>
+<body>
+    <div class="container mt-5">
+        
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2>💼 Meu Painel de Aportes</h2>
+            <button id="btnAtualizar" class="btn btn-dark shadow-sm px-4 py-2" onclick="chamarRobo()">
+                <span id="btnText">🔄 Atualizar Dados da Suno</span>
+                <span id="btnLoading" class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+            </button>
+        </div>
+        
+        <div class="card p-4 mb-4 shadow-sm border-0 rounded-3" style="background-color: #ffffff;">
+            <div class="row align-items-center">
+                <div class="col-md-4">
+                    <label for="valorAporte" class="form-label text-muted fw-bold">Quanto você quer aportar hoje? (R$)</label>
+                    <input type="number" id="valorAporte" class="form-control form-control-lg border-success" 
+                           placeholder="Ex: 1000" value="{{ ultimo_aporte }}" 
+                           onkeyup="calcularAporte()" onchange="salvarAporte(this.value)">
+                </div>
+                <div class="col-md-8 text-end">
+                    <small class="text-muted">As quantidades serão calculadas e a tabela poderá ser filtrada livremente.</small>
+                </div>
+            </div>
+        </div>
+
+        <ul class="nav nav-tabs" id="carteirasTab" role="tablist">
+            {% for nome_carteira, ativos in carteiras.items() %}
+            <li class="nav-item" role="presentation">
+                <button class="nav-link {% if loop.first %}active{% endif %}" id="tab-{{ nome_carteira }}" 
+                        data-bs-toggle="tab" data-bs-target="#pane-{{ nome_carteira }}" type="button" role="tab">
+                    {{ nome_carteira }}
+                </button>
+            </li>
+            {% endfor %}
+        </ul>
+
+        <div class="tab-content mb-5" id="carteirasTabContent">
+            {% for nome_carteira, ativos in carteiras.items() %}
+            <div class="tab-pane fade {% if loop.first %}show active{% endif %} bg-white border border-top-0 p-3 shadow-sm rounded-bottom" 
+                 id="pane-{{ nome_carteira }}" role="tabpanel">
+                
+                <div class="table-responsive mt-3">
+                    <table class="table table-hover align-middle text-center tabela-suno">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Rank</th>
+                                <th>Tenho?</th>
+                                <th>Ticker</th>
+                                
+                                {% if ativos|length > 0 and 'Setor' in ativos[0] %} <th>Setor</th> {% endif %}
+                                {% if ativos|length > 0 and 'DY Esperado' in ativos[0] %} <th>DY Esperado</th> {% endif %}
+                                
+                                <th>Entrada</th>
+                                <th>Preço Atual</th>
+                                <th>Preço Teto</th>
+                                <th>Alocação</th>
+                                <th>Rentabilidade</th>
+                                <th>Viés</th>
+                                <th class="text-success">Qtd. Possível</th>
+                                <th class="text-primary">Sobra (R$)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for ativo in ativos %}
+                            {% if ativo['Ticker'] and ativo['Ticker']|string|trim != '' and ativo['Ticker']|string|trim != 'None' %}
+                            
+                            <tr class="linha-ativo" data-preco="{{ ativo['Preço Atual'] }}">
+                                
+                                <td class="fw-bold text-muted">{{ ativo['Rank'] }}</td>
+                                
+                                <td class="td-tenho" data-order="{% if ativo['Ticker'] in meus_ativos %}1{% else %}0{% endif %}">
+                                    <input class="form-check-input" type="checkbox" style="transform: scale(1.3);" 
+                                           onchange="salvarAtivo('{{ ativo['Ticker'] }}', this)"
+                                           {% if ativo['Ticker'] in meus_ativos %}checked{% endif %}>
+                                </td>
+                                
+                                <td class="fw-bold fs-6">{{ ativo['Ticker'] }}</td>
+                                
+                                {% if 'Setor' in ativo %} <td class="text-secondary">{{ ativo['Setor'] }}</td> {% endif %}
+                                {% if 'DY Esperado' in ativo %} <td class="text-primary fw-bold">{{ ativo['DY Esperado'] }}</td> {% endif %}
+                                
+                                <td class="text-muted">R$ {{ ativo['Entrada'] }}</td>
+                                <td class="fw-bold">R$ {{ ativo['Preço Atual'] }}</td>
+                                <td class="text-muted">R$ {{ ativo['Preço Teto'] }}</td>
+                                <td class="text-secondary fw-bold">{{ ativo['Alocação'] }}</td>
+                                
+                                <td class="fw-bold {% if '-' in ativo['Rentabilidade']|string %}text-danger{% else %}text-success{% endif %}">
+                                    {{ ativo['Rentabilidade'] }}
+                                </td>
+                                
+                                <td>
+                                    <span class="badge rounded-pill {% if ativo['Viés'] == 'Comprar' %}bg-success{% else %}bg-warning text-dark{% endif %}">
+                                        {{ ativo['Viés'] }}
+                                    </span>
+                                </td>
+                                
+                                <td class="td-qtd text-success fw-bold fs-5" data-order="0"><span class="qtd-calc">0</span></td>
+                                <td class="td-sobra text-primary fw-bold" data-order="0"><span class="sobra-calc">R$ 0,00</span></td>
+                                
+                            </tr>
+                            {% endif %}
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
+    <script src="https://cdn.datatables.net/1.13.6/js/dataTables.bootstrap5.min.js"></script>
+    
+    <script>
+        let minhasTabelas;
+
+        $(document).ready(function() {
+            // Inicia os Filtros Avançados
+            minhasTabelas = $('.tabela-suno').DataTable({
+                "paging": false,
+                "info": false,
+                "language": {
+                    "search": "_INPUT_",
+                    "searchPlaceholder": "🔍 Pesquisar na carteira...",
+                    "zeroRecords": "Nenhum ativo encontrado com esse filtro."
+                }
+            });
+
+            // Faz o cálculo inicial assim que a página carrega
+            calcularAporte();
+        });
+
+        // --- MATEMÁTICA E ATUALIZAÇÃO DOS FILTROS ---
+        function calcularAporte() {
+            let aporte = parseFloat(document.getElementById('valorAporte').value) || 0;
+            
+            // Passa por todas as linhas de todas as tabelas (mesmo as ocultadas pela barra de pesquisa)
+            minhasTabelas.rows().every(function() {
+                let node = this.node();
+                let $linha = $(node);
+                
+                let precoTexto = $linha.attr('data-preco');
+                let precoNum = parseFloat(precoTexto.replace(',', '.'));
+                
+                let qtd = 0;
+                let sobra = 0;
+                
+                if (!isNaN(precoNum) && precoNum > 0 && aporte > 0) {
+                    qtd = Math.floor(aporte / precoNum); 
+                    sobra = aporte - (qtd * precoNum); 
+                }
+                
+                // Muda o texto visível na tela
+                $linha.find('.qtd-calc').text(qtd);
+                $linha.find('.sobra-calc').text('R$ ' + sobra.toFixed(2).replace('.', ','));
+                
+                // MÁGICA DO FILTRO: Insere o valor invisível pro DataTables conseguir ordenar!
+                $linha.find('.td-qtd').attr('data-order', qtd);
+                $linha.find('.td-sobra').attr('data-order', sobra);
+            });
+            
+            // Avisa o DataTables que os números mudaram para ele arrumar as ordenações
+            minhasTabelas.rows().invalidate('dom');
+        }
+
+        // --- SALVAMENTO NO BANCO DE DADOS (SILENCIOSO) ---
+        function salvarAporte(valor) {
+            fetch('/salvar_perfil', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tipo: 'aporte', valor: valor })
+            });
+        }
+
+        function salvarAtivo(ticker, checkbox) {
+            let isChecked = checkbox.checked;
+            
+            // Arruma a ordenação do DataTables para a coluna "Tenho?"
+            $(checkbox).closest('td').attr('data-order', isChecked ? 1 : 0);
+            minhasTabelas.rows().invalidate('dom');
+            
+            // Manda salvar no Python
+            fetch('/salvar_perfil', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tipo: 'ativo', ticker: ticker, tenho: isChecked })
+            });
+        }
+
+        // --- GATILHO DO ROBÔ ---
+        function chamarRobo() {
+            let btn = document.getElementById('btnAtualizar');
+            let text = document.getElementById('btnText');
+            let loading = document.getElementById('btnLoading');
+
+            btn.disabled = true;
+            text.innerText = " Extraindo dados da Suno... ";
+            loading.classList.remove('d-none');
+
+            fetch('/atualizar', { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    if(data.status === 'sucesso') {
+                        window.location.reload(); 
+                    } else {
+                        alert("❌ Erro ao atualizar: " + data.mensagem);
+                        reiniciarBotao();
+                    }
+                })
+                .catch(error => {
+                    alert("❌ Falha de comunicação com o servidor.");
+                    reiniciarBotao();
+                });
+
+            function reiniciarBotao() {
+                btn.disabled = false;
+                text.innerText = "🔄 Atualizar Dados da Suno";
+                loading.classList.add('d-none');
+            }
+        }
+    </script>
+</body>
+</html>

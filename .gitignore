@@ -2,9 +2,13 @@
 venv/
 env/
 
-# Ignorar variáveis de ambiente (SUAS SENHAS)
+# Ignorar variaveis de ambiente (SUAS SENHAS)
 .env
 
-# Ignorar arquivos temporários do Python
+# Ignorar arquivos temporarios do Python
 __pycache__/
 *.pyc
+
+# Ignorar banco de dados local (Seus dados privados)
+*.db
+banco_suno.db
