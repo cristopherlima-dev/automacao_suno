@@ -5,13 +5,15 @@
     <title>Painel de Aportes Suno</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.datatables.net/1.13.6/css/dataTables.bootstrap5.min.css" rel="stylesheet">
+    <link href="https://cdn.datatables.net/buttons/2.4.1/css/buttons.bootstrap5.min.css" rel="stylesheet">
+    
     <style>
         body { background-color: #f4f6f9; }
         .nav-tabs .nav-link.active { font-weight: bold; color: #198754; border-bottom: 3px solid #198754; }
         .nav-tabs .nav-link { color: #495057; font-size: 1.1rem; }
         th, td { white-space: nowrap; } 
         
-        /* Deixa a barra de pesquisa nova bem bonita */
+        /* Deixa a barra de pesquisa bem bonita */
         .dataTables_filter input {
             border: 2px solid #198754 !important;
             border-radius: 8px !important;
@@ -19,6 +21,9 @@
             width: 300px !important;
         }
         .dataTables_filter label { font-weight: bold; color: transparent; }
+        
+        /* Ajuste fino pro botão de colunas ficar alinhado */
+        .dt-buttons { margin-bottom: 0 !important; }
     </style>
 </head>
 <body>
@@ -68,7 +73,7 @@
                  id="pane-{{ nome_carteira }}" role="tabpanel">
                 
                 <div class="table-responsive mt-3">
-                    <table class="table table-hover align-middle text-center tabela-suno">
+                    <table class="table table-hover align-middle text-center tabela-suno" id="tabela-{{ nome_carteira|replace(' ', '') }}">
                         <thead class="table-light">
                             <tr>
                                 <th>Rank</th>
@@ -143,15 +148,28 @@
     <script src="https://cdn.datatables.net/1.13.6/js/dataTables.bootstrap5.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.mask/1.14.16/jquery.mask.min.js"></script>
     
+    <script src="https://cdn.datatables.net/buttons/2.4.1/js/dataTables.buttons.min.js"></script>
+    <script src="https://cdn.datatables.net/buttons/2.4.1/js/buttons.bootstrap5.min.js"></script>
+    <script src="https://cdn.datatables.net/buttons/2.4.1/js/buttons.colVis.min.js"></script>
+    
     <script>
         $(document).ready(function() {
-            // Aplica a máscara de R$ no campo
             $('#valorAporte').mask('#.##0,00', {reverse: true});
             
-            // Inicia os Filtros Avançados para TODAS as tabelas de forma robusta
+            // Inicia os Filtros e o Botão de Colunas
             $('.tabela-suno').DataTable({
                 "paging": false,
                 "info": false,
+                "stateSave": true, // A MÁGICA: Lembra as colunas ocultas e ordenações se fechar a página
+                "dom": "<'row mb-3 align-items-center'<'col-md-6 text-start'B><'col-md-6 text-end'f>>" +
+                       "<'row'<'col-sm-12'tr>>",
+                "buttons": [
+                    {
+                        extend: 'colvis',
+                        text: '⚙️ Escolher Colunas',
+                        className: 'btn btn-dark btn-sm fw-bold text-white'
+                    }
+                ],
                 "language": {
                     "search": "_INPUT_",
                     "searchPlaceholder": "🔍 Pesquisar na carteira...",
@@ -159,22 +177,16 @@
                 }
             });
 
-            // Faz o cálculo inicial assim que a página carrega
             calcularAporte();
         });
 
-        // --- MATEMÁTICA E ATUALIZAÇÃO DOS FILTROS (CORRIGIDO) ---
         function calcularAporte() {
             let aporteTexto = $('#valorAporte').val() || "0";
-            
-            // Remove os pontos de milhar e troca a vírgula por ponto para o JS entender a matemática
             let aporteNumStr = aporteTexto.replace(/\./g, '').replace(',', '.');
             let aporte = parseFloat(aporteNumStr);
             
-            // Salva silenciosamente no banco o valor formatado
             salvarAporte(aporteTexto);
             
-            // MÁGICA: Itera por CADA tabela individualmente para garantir que uma não trave a outra
             $('.tabela-suno').each(function() {
                 let dt = $(this).DataTable();
                 
@@ -184,8 +196,6 @@
                         let $linha = $(node);
                         
                         let precoTexto = $linha.attr('data-preco') || "0";
-                        
-                        // Garante a leitura de cotações altas (ex: 1.250,00 vira 1250.00)
                         let precoNumStr = precoTexto.toString().replace(/\./g, '').replace(',', '.');
                         let precoNum = parseFloat(precoNumStr);
                         
@@ -197,11 +207,9 @@
                             sobra = aporte - (qtd * precoNum); 
                         }
                         
-                        // Muda o texto visível na tela
                         $linha.find('.qtd-calc').text(qtd);
                         $linha.find('.sobra-calc').text('R$ ' + sobra.toFixed(2).replace('.', ','));
                         
-                        // Insere o valor invisível pro DataTables conseguir ordenar!
                         $linha.find('.td-qtd').attr('data-order', qtd);
                         $linha.find('.td-sobra').attr('data-order', sobra);
                     } catch (e) {
@@ -209,13 +217,11 @@
                     }
                 });
                 
-                // Avisa o DataTables desta aba específica para atualizar as ordenações
                 dt.rows().invalidate('dom');
                 dt.draw(false);
             });
         }
 
-        // --- SALVAMENTO NO BANCO DE DADOS ---
         function salvarAporte(valorFormatado) {
             fetch('/salvar_perfil', {
                 method: 'POST',
@@ -227,14 +233,11 @@
         function salvarAtivo(ticker, checkbox) {
             let isChecked = checkbox.checked;
             
-            // Arruma a ordenação do DataTables para a coluna "Tenho?"
             $(checkbox).closest('td').attr('data-order', isChecked ? 1 : 0);
             
-            // Atualiza a tabela que contém este checkbox
             let dt = $(checkbox).closest('table').DataTable();
             dt.rows().invalidate('dom');
             
-            // Manda salvar no Python
             fetch('/salvar_perfil', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -242,7 +245,6 @@
             });
         }
 
-        // --- GATILHO DO ROBÔ ---
         function chamarRobo() {
             let btn = document.getElementById('btnAtualizar');
             let text = document.getElementById('btnText');
